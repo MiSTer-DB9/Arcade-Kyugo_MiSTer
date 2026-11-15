@@ -20,7 +20,6 @@
 	<button_names>Fire,Bomb</button_names>
 
 	<switches default="AF,FF">
-		<!-- DSW1 (AY1 port A, read & inverted by sub) -->
 		<dip bits="0,1"      name="Lives"          ids="6,5,4,3"/>
 		<dip bits="2"        name="Bonus Life"     ids="Every 70000,Every 50000"/>
 		<dip bits="3"        name="Slow Motion"    ids="On,Off"/>
@@ -28,18 +27,16 @@
 		<dip bits="5"        name="Sound Test"     ids="On,Off"/>
 		<dip bits="6"        name="Cabinet"        ids="Upright,Cocktail"/>
 		<dip bits="7"        name="Freeze"         ids="On,Off"/>
-		<!-- DSW2 (AY1 port B) -->
 		<dip bits="8,10"     name="Coin A"         ids="Free Play,3C/2C,2C/1C,1C/6C,1C/4C,1C/3C,1C/2C,1C/1C"/>
 		<dip bits="11,13"    name="Coin B"         ids="5C/1C,4C/1C,3C/1C,2C/1C,3C/4C,1C/3C,1C/2C,1C/1C"/>
 	</switches>
 
-	<!-- Index 1: variant | rot_flip (bit 3) | landscape (bit 4). MAME machine config "flashgala". -->
+	<!-- Index 1: Config -->
 	<rom index="1">
 		<part>12</part>
 	</rom>
 
-	<!-- Index 0: main 32K, sub 32K, FG 4K, BG planes 3x 16K (8K + pad, in MAME's "plane N" order), sprite planes
-	     3x 32K, PROMs R / G / B, char lookup, timing (rtl/ram_rom/rom_loader.sv) -->
+	<!-- Index 0: ROM -->
 	<rom index="0" md5="none" zip="flashgala.zip|flashgal.zip">
 		<part crc="aa889ace" name="flashgal.5"/>
 		<part crc="00c4851f" name="epr-7168.4h"/>
@@ -69,6 +66,7 @@
 		<part crc="83a39201" name="bpr.2c"/>
 	</rom>
 
+	<!-- Index 4: NVRAM -->
 	<nvram index="4" size="2048"></nvram>
 	<remark>Flashgal (Kyugo / Sega)</remark>
 </misterromdescription>
