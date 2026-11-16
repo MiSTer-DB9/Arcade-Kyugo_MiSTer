@@ -70,6 +70,12 @@ module emu
 	output        HDMI_BLACKOUT,
 	output        HDMI_BOB_DEINT,
 
+	input   [5:0] LFB_FMT,
+	input  [31:0] LFB_BASE,
+	input  [11:0] LFB_WIDTH,
+	input  [11:0] LFB_HEIGHT,
+	input  [13:0] LFB_STRIDE,
+
 `ifdef MISTER_FB
 	// Use framebuffer in DDRAM
 	// FB_FORMAT:
@@ -190,6 +196,43 @@ module emu
 	input         OSD_STATUS
 );
 
+wire         forced_scandoubler;
+wire   [1:0] buttons;
+wire [127:0] status;
+wire  [10:0] ps2_key;
+
+wire        ioctl_download;
+wire        ioctl_upload;
+wire        ioctl_upload_req;
+wire  [7:0] ioctl_index;
+wire        ioctl_wr;
+wire [24:0] ioctl_addr;
+wire  [7:0] ioctl_dout;
+wire  [7:0] ioctl_din;
+
+wire [15:0] joystick_0, joystick_1;
+wire [15:0] joy = joystick_0 | joystick_1;
+
+wire [21:0] gamma_bus;
+wire        direct_video;
+
+wire CLK_49M;
+wire locked;
+
+wire [63:0] reconfig_to_pll;
+wire [63:0] reconfig_from_pll;
+
+wire [15:0]hs_address;
+wire [7:0] hs_data_in;
+wire [7:0] hs_data_out;
+wire hs_write_enable;
+wire hs_access_read;
+wire hs_access_write;
+wire hs_pause;
+wire hs_configured;
+
+reg [7:0] core_config = 8'd0;
+
 assign ADC_BUS  = 'Z;
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP driven by wrapper; USER_OUT driven by joydb (USER_OUT_DRIVE) below
 assign USER_PP = USER_PP_DRIVE;
@@ -217,14 +260,8 @@ assign LED_POWER = 0;
 assign LED_USER  = ioctl_download;
 assign BUTTONS = 0;
 
-///////////////////////////////////////////////////
-
 wire [1:0] ar = status[14:13];
 
-// Output aspect ratio follows the GAME orientation, not status[12] alone. Kyugo is MIXED-orientation
-// per MAME ROT (vertical: Gyrodine/Repulse/99/SonOfPhoenix/SRD; horizontal: Flashgal/Legend/Airwolf).
-// 'landscape' reuses the same orientation term that drives the rotation's no_rotate wire below
-// (status[12] | core_config[4]), so the AR can never disagree with screen_rotate.
 wire landscape = status[12] | core_config[4];
 assign VIDEO_ARX = landscape ? ((!ar) ? 12'd4 : (ar - 1'd1)) : ((!ar) ? 12'd3 : (ar - 1'd1));
 assign VIDEO_ARY = landscape ? ((!ar) ? 12'd3 : 12'd0)       : ((!ar) ? 12'd4 : 12'd0);
@@ -258,25 +295,6 @@ localparam CONF_STR = {
 	"V,v",`BUILD_DATE
 };
 
-wire         forced_scandoubler;
-wire   [1:0] buttons;
-wire [127:0] status;
-wire  [10:0] ps2_key;
-
-wire        ioctl_download;
-wire        ioctl_upload;
-wire        ioctl_upload_req;
-wire  [7:0] ioctl_index;
-wire        ioctl_wr;
-wire [24:0] ioctl_addr;
-wire  [7:0] ioctl_dout;
-wire  [7:0] ioctl_din;
-
-wire [15:0] joystick_0, joystick_1;
-wire [15:0] joy = joystick_0 | joystick_1;
-
-wire [21:0] gamma_bus;
-wire        direct_video;
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
@@ -405,9 +423,6 @@ assign joystick_1 = joydb_2ena ? (OSD_STATUS ? 16'b0 : joydb_2_mapped) : joydb_1
 
 ////////////////////   CLOCKS   ///////////////////
 
-wire CLK_49M;
-wire locked;
-
 pll pll
 (
 	.refclk(CLK_50M),
@@ -418,14 +433,11 @@ pll pll
 	.locked(locked)
 );
 
-wire [63:0] reconfig_to_pll;
-wire [63:0] reconfig_from_pll;
 wire        cfg_waitrequest;
 wire        cfg_write;
 wire  [5:0] cfg_address;
 wire [31:0] cfg_data;
 
-// PLL reconfig kept for potential future use
 pll_cfg pll_cfg
 (
 	.mgmt_clk(CLK_50M),
@@ -440,57 +452,30 @@ pll_cfg pll_cfg
 	.reconfig_from_pll(reconfig_from_pll)
 );
 
-// No PLL reconfiguration needed for Blue Print
 assign cfg_write = 0;
 assign cfg_address = 0;
 assign cfg_data = 0;
 
-// Hold both Z80s in reset until the PLL is locked and the ROM download has finished, so they never
-// execute against an unstable clock or partial ROM data.
 wire reset = RESET | status[0] | buttons[1] | ioctl_download | ~locked;
 
-///////////////////         Keyboard           //////////////////
+wire        pause_cpu;
+wire [12:0] kb;
+/* verilator lint_off PINCONNECTEMPTY */
+ctl_keyboard keyboard(.clk(CLK_49M), .ps2_key(ps2_key), .pause(pause_cpu), .kb(kb), .kbx());
+/* verilator lint_on PINCONNECTEMPTY */
+wire btn_up       = kb[0];
+wire btn_down     = kb[1];
+wire btn_left     = kb[2];
+wire btn_right    = kb[3];
+wire btn_fire     = kb[4];
+wire btn_fire2    = kb[5];
+wire btn_1p_start = kb[6];
+wire btn_2p_start = kb[7];
+wire btn_coin1    = kb[8];
+wire btn_coin2    = kb[9];
+wire btn_service  = kb[10];
+wire btn_pause    = kb[12];
 
-reg btn_up       = 0;
-reg btn_down     = 0;
-reg btn_left     = 0;
-reg btn_right    = 0;
-reg btn_fire     = 0;
-reg btn_fire2    = 0;
-reg btn_coin1    = 0;
-reg btn_coin2    = 0;
-reg btn_1p_start = 0;
-reg btn_2p_start = 0;
-reg btn_pause    = 0;
-reg btn_service  = 0;
-
-wire pressed = ps2_key[9];
-wire [7:0] code = ps2_key[7:0];
-always @(posedge CLK_49M) begin
-	reg old_state;
-	old_state <= ps2_key[10];
-	if(old_state != ps2_key[10]) begin
-		case(code)
-			'h16: btn_1p_start <= pressed; // 1
-			'h1E: btn_2p_start <= pressed; // 2
-			'h2E: btn_coin1    <= pressed; // 5
-			'h36: btn_coin2    <= pressed; // 6
-			'h46: btn_service  <= pressed; // 9
-			'h4D: btn_pause    <= pressed; // P
-
-			'h75: btn_up      <= pressed; // up
-			'h72: btn_down    <= pressed; // down
-			'h6B: btn_left    <= pressed; // left
-			'h74: btn_right   <= pressed; // right
-			'h14: btn_fire    <= pressed; // ctrl
-			'h11: btn_fire2   <= pressed; // alt
-		endcase
-	end
-end
-
-//////////////////  Arcade Buttons/Interfaces   ///////////////////////////
-
-//Player 1
 wire m_up1      = btn_up      | joystick_0[1];
 wire m_down1    = btn_down    | joystick_0[0];
 wire m_left1    = btn_left    | joystick_0[3];
@@ -498,7 +483,6 @@ wire m_right1   = btn_right   | joystick_0[2];
 wire m_fire1    = btn_fire    | joystick_0[4];
 wire m_fire1b   = btn_fire2   | joystick_0[5];
 
-//Player 2
 wire m_up2      = btn_up      | joystick_1[1];
 wire m_down2    = btn_down    | joystick_1[0];
 wire m_left2    = btn_left    | joystick_1[3];
@@ -506,50 +490,40 @@ wire m_right2   = btn_right   | joystick_1[2];
 wire m_fire2    = btn_fire    | joystick_1[4];
 wire m_fire2b   = btn_fire2   | joystick_0[5];
 
-//Start/coin
 wire m_start1   = btn_1p_start | joystick_0[6];
 wire m_start2   = btn_2p_start | joystick_0[7];
 wire m_coin1    = btn_coin1    | joystick_0[8];
 wire m_coin2    = btn_coin2;
 wire m_pause    = btn_pause    | joystick_0[9];
 
-// PAUSE SYSTEM
-wire pause_cpu;
 wire [23:0] rgb_out;
 pause #(8,8,8,49) pause
 (
 	.*,
 	.clk_sys(CLK_49M),
 	.user_button(m_pause),
-	// Hiscore is not allowed to pause the CPUs: hs_pause -> pause_request would freeze both Z80s,
-	// and a stuck hiscore pause is a hard lock. Forced off here regardless of hs_pause's value.
 	.pause_request(1'b0),
 	.options(~status[26:25])
 );
 
-// DIP SWITCHES
-reg [7:0] dip_sw[8] = '{8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF};	// FF fallback = no-freeze if MRA <dip> ever fails to download; real per-game defaults come from the MRA
+reg [7:0] dip_sw[8] = '{8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF,8'hFF};
 always @(posedge CLK_49M) begin
 	if(ioctl_wr && (ioctl_index==254) && !ioctl_addr[24:3])
 		dip_sw[ioctl_addr[2:0]] <= ioctl_dout;
 end
 
-// Kyugo core config
-reg [7:0] core_config = 8'd0;
 always_ff @(posedge CLK_49M) begin
     if (ioctl_wr && ioctl_index == 8'd1)
         core_config <= ioctl_dout;
 end
 
-wire rot_flip = core_config[3];  // decoupled from bit 0 to avoid colliding with variant_sel[0]
-
-///////////////                 Video                  ////////////////
+// core_config bit 3, not bit 0: bits 2:0 are the variant.
+wire rot_flip = core_config[3];
 
 wire hblank, vblank;
 wire hs, vs;
 wire [4:0] r_out, g_out, b_out;
 
-// Scale 5-bit color to 8-bit for VGA output
 wire [7:0] r = (r_out[0] ? 8'h19 : 8'h00) + 
                (r_out[1] ? 8'h24 : 8'h00) + 
                (r_out[2] ? 8'h35 : 8'h00) +
@@ -568,9 +542,6 @@ wire [7:0] b = (b_out[0] ? 8'h19 : 8'h00) +
 wire ce_pix;
 
 wire rotate_ccw = rot_flip ? 0 : 1;
-// rot_flip lives at core_config bit 3, separate from variant_sel[2:0], so the two never collide.
-// no_rotate (bit 4) marks the per-game "horizontal" ROT0 sets (Flashgal/Legend/Airwolf) so they
-// are not rotated at all.
 wire no_rotate = status[12] | direct_video | core_config[4];
 wire flip = ~no_rotate ^ status[11];
 wire video_rotated;
@@ -591,19 +562,11 @@ arcade_video #(288, 24) arcade_video
 	.fx(status[17:15])
 );
 
-// Assemble player control bytes for Kyugo (active HIGH)
-// p1/p2: {2'b00, btn2, btn1, right, left, down, up}
-// sys:   {2'b00, service, start2, start1, 1'b0, coin2, coin1}
-// The bit names above are in the GAME's frame, which on the ROT90 sets is 90 degrees from the
-// player's frame: the right/left bits drive perceived up/down, and the down/up bits drive
-// perceived left/right. This holds identically across all sets regardless of rot_flip, so no
-// per-set control swap is needed.
 wire [7:0] p1_controls  = {2'b00, m_fire1b, m_fire1, m_right1, m_left1, m_down1, m_up1};
 wire [7:0] p2_controls  = {2'b00, m_fire2b, m_fire2, m_right2, m_left2, m_down2, m_up2};
 wire [7:0] sys_controls = {2'b00, btn_service, m_start2, m_start1, 1'b0, m_coin2, m_coin1};
 
-// Instantiate Kyugo top-level module
-Kyugo kyugo_inst
+kyugo_dispatcher kyugo_inst
 (
 	.reset(~reset),
 
@@ -642,22 +605,9 @@ Kyugo kyugo_inst
 	.hs_address(hs_address),
 	.hs_data_out(hs_data_out),
 	.hs_data_in(hs_data_in),
-	// hs_write is forced off: it would hijack port A of the shared RAM (the main<->sub handshake
-	// region -- hiscore is wired only to shared_ram), so this keeps hiscore from ever
-	// writing/corrupting the handshake.
 	.hs_write(1'b0)
 );
 
-// HISCORE SYSTEM
-// --------------
-wire [15:0]hs_address;
-wire [7:0] hs_data_in;
-wire [7:0] hs_data_out;
-wire hs_write_enable;
-wire hs_access_read;
-wire hs_access_write;
-wire hs_pause;
-wire hs_configured;
 
 hiscore #(
 	.HS_ADDRESSWIDTH(16),
